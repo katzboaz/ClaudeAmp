@@ -1,5 +1,6 @@
-// Renders promo.html to an MP4: node render.mjs [out.mp4] [--stills t1,t2,...]
-import { chromium } from '/opt/node-tools/node_modules/playwright/index.mjs'
+// Renders promo.html to claudeamp-promo.mp4: python3 soundtrack.py && node render.mjs
+// Stills for checking a frame: node render.mjs --stills 11.5,17.5
+import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -7,7 +8,7 @@ import path from 'node:path'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const args = process.argv.slice(2)
 const stillsAt = args.includes('--stills') ? args[args.indexOf('--stills') + 1].split(',').map(Number) : null
-const out = args.find(a => a.endsWith('.mp4')) ?? path.join(here, 'claudeamp-promo.silent.mp4')
+const out = path.join(here, 'claudeamp-promo.silent.mp4')
 const FPS = 30
 
 const browser = await chromium.launch()
@@ -37,4 +38,10 @@ for (let i = 0; i < frames; i++) {
 ff.stdin.end()
 await new Promise(r => ff.on('close', r))
 await browser.close()
-console.log('wrote', out)
+
+// Lay the soundtrack under the frames.
+const final = path.join(here, 'claudeamp-promo.mp4')
+const mux = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-i', out, '-i', path.join(here, 'soundtrack.wav'),
+  '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', final], { stdio: 'inherit' })
+const code = await new Promise(r => mux.on('close', r))
+console.log(code === 0 ? `wrote ${final}` : 'mux failed: run python3 soundtrack.py first')
