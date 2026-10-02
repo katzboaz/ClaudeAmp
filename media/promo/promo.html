@@ -1,0 +1,478 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ClaudeAmp Promo</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// A deterministic animation: render(t) draws the frame at t seconds.
+// The renderer steps t at 30 fps; opening this file in a browser plays it live.
+const W = 1920, H = 1080, DURATION = 30, BPM = 120, BEAT = 60 / BPM
+const c = document.getElementById('c')
+const ctx = c.getContext('2d')
+const MONO = '"DejaVu Sans Mono", "Menlo", monospace'
+const SANS = '"DejaVu Sans", "Helvetica Neue", Arial, sans-serif'
+
+const SKINS = {
+  classic: { name: 'classic', titleA: '#2a2a8c', titleB: '#10104a', titleFg: '#ffffff', lcd: '#00ff3c', lcdDim: '#178a2a', low: '#00d000', mid: '#e0e000', high: '#ff2a00', peak: '#d0d0d0', body: '#2b2b38', bodyHi: '#4a4a5c', screen: '#000000' },
+  claude:  { name: 'claude',  titleA: '#e08a6a', titleB: '#b85a3c', titleFg: '#1a1915', lcd: '#f5b896', lcdDim: '#8a5a40', low: '#b05a3c', mid: '#d97757', high: '#ffd8c2', peak: '#faf9f5', body: '#2a2622', bodyHi: '#4a423b', screen: '#14120f' },
+  llama:   { name: 'llama',   titleA: '#f2c94c', titleB: '#b8890f', titleFg: '#000000', lcd: '#ffd84a', lcdDim: '#7a6420', low: '#8a5a00', mid: '#e8b923', high: '#fff3a0', peak: '#ffffff', body: '#2a2410', bodyHi: '#4d431e', screen: '#0d0a00' },
+  vapor:   { name: 'vapor',   titleA: '#9d4edd', titleB: '#5a189a', titleFg: '#ffffff', lcd: '#5ef0ff', lcdDim: '#2b6c78', low: '#3a0ca3', mid: '#f72585', high: '#4cc9f0', peak: '#ffffff', body: '#1d0b33', bodyHi: '#3c1d63', screen: '#10002b' },
+}
+const SKIN_ORDER = ['classic', 'claude', 'llama', 'vapor']
+
+const TRACKS = [
+  ['Read', 'README.md', '0.1s'],
+  ['Grep', 'registerHook', '0.3s'],
+  ['Bash', 'npm test', '4.2s'],
+  ['Edit', 'register.tsx', '0.2s'],
+  ['Bash', 'claude plugin validate .', '1.1s'],
+  ['Write', 'tests/claudeamp.test.ts', '0.1s'],
+  ['Bash', 'claude plugin test .', '0.6s'],
+  ['github', 'create_pull_request', '0.9s'],
+]
+
+// ---------- math ----------
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v))
+const seg = (t, a, b) => clamp((t - a) / (b - a))
+const easeOut = x => 1 - Math.pow(1 - x, 3)
+const easeInOut = x => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
+const backOut = x => { const s = 1.7; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2) }
+const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+const lerp = (a, b, x) => a + (b - a) * x
+
+// The spectrum as a pure function of time: beats on the kick, sines for melody.
+function level(band, t, energy) {
+  const bands = 32
+  const f = band / bands
+  const beatPhase = (t % BEAT) / BEAT
+  const kick = Math.exp(-beatPhase * 6) * (1 - f) * 0.9
+  const off = ((t + BEAT / 2) % BEAT) / BEAT
+  const hat = Math.exp(-off * 10) * f * 0.5
+  const melody = 0.5 + 0.5 * Math.sin(t * (2.1 + f * 7.3) + band * 1.7)
+  const n = hash(band * 31 + Math.floor(t * 15))
+  const n2 = hash(band * 31 + Math.floor(t * 15) + 1)
+  const noise = lerp(n, n2, (t * 15) % 1)
+  const v = (kick + hat + melody * 0.35 * (1 - f * 0.4) + noise * 0.3) * energy
+  return clamp(v * 0.85)
+}
+function peak(band, t, energy) {
+  let p = 0
+  for (let k = 0; k < 12; k++) {
+    const dt = k * 0.06
+    const fall = dt > 0.25 ? (dt - 0.25) * 1.6 : 0
+    p = Math.max(p, level(band, t - dt, energy) - fall)
+  }
+  return p
+}
+
+// ---------- drawing helpers ----------
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + w, y, x + w, y + h, r)
+  ctx.arcTo(x + w, y + h, x, y + h, r)
+  ctx.arcTo(x, y + h, x, y, r)
+  ctx.arcTo(x, y, x + w, y, r)
+  ctx.closePath()
+}
+function glowText(text, x, y, color, size, font = MONO, blur = 18, align = 'left', weight = 'bold') {
+  ctx.save()
+  ctx.font = `${weight} ${size}px ${font}`
+  ctx.textAlign = align
+  ctx.textBaseline = 'middle'
+  ctx.shadowColor = color
+  ctx.shadowBlur = blur
+  ctx.fillStyle = color
+  ctx.fillText(text, x, y)
+  ctx.restore()
+}
+function bevel(x, y, w, h, skin, pressed = false) {
+  ctx.fillStyle = skin.body
+  ctx.fillRect(x, y, w, h)
+  ctx.fillStyle = pressed ? 'rgba(0,0,0,.5)' : skin.bodyHi
+  ctx.fillRect(x, y, w, 3)
+  ctx.fillRect(x, y, 3, h)
+  ctx.fillStyle = pressed ? skin.bodyHi : 'rgba(0,0,0,.55)'
+  ctx.fillRect(x, y + h - 3, w, 3)
+  ctx.fillRect(x + w - 3, y, 3, h)
+}
+function inset(x, y, w, h, fill) {
+  ctx.fillStyle = fill
+  ctx.fillRect(x, y, w, h)
+  ctx.fillStyle = 'rgba(0,0,0,.6)'
+  ctx.fillRect(x, y, w, 3)
+  ctx.fillRect(x, y, 3, h)
+  ctx.fillStyle = 'rgba(255,255,255,.12)'
+  ctx.fillRect(x, y + h - 2, w, 2)
+  ctx.fillRect(x + w - 2, y, 2, h)
+}
+function marquee(text, width, offset) {
+  const loop = text + '  ***  '
+  if (text.length <= width) return text
+  const start = Math.floor(offset) % loop.length
+  let out = ''
+  for (let i = 0; i < width; i++) out += loop[(start + i) % loop.length]
+  return out
+}
+function background(t, hue = 0) {
+  const g = ctx.createRadialGradient(W / 2, H * 0.45, 100, W / 2, H / 2, W * 0.75)
+  g.addColorStop(0, `hsl(${235 + hue}, 45%, 13%)`)
+  g.addColorStop(1, `hsl(${245 + hue}, 50%, 3%)`)
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, W, H)
+  // Perspective grid floor, retro style.
+  ctx.save()
+  ctx.globalAlpha = 0.18
+  ctx.strokeStyle = '#7a5cff'
+  ctx.lineWidth = 2
+  const horizon = H * 0.72
+  for (let i = -20; i <= 20; i++) {
+    ctx.beginPath()
+    ctx.moveTo(W / 2 + i * 40, horizon)
+    ctx.lineTo(W / 2 + i * 260, H)
+    ctx.stroke()
+  }
+  const scroll = (t * 0.6) % 1
+  for (let k = 0; k < 10; k++) {
+    const z = (k + scroll) / 10
+    const y = horizon + (H - horizon) * z * z
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(W, y)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+function scanlines(alpha = 0.12) {
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.fillStyle = '#000'
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 2)
+  ctx.restore()
+  const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 1.0)
+  v.addColorStop(0, 'rgba(0,0,0,0)')
+  v.addColorStop(1, 'rgba(0,0,0,.65)')
+  ctx.fillStyle = v
+  ctx.fillRect(0, 0, W, H)
+}
+
+// ---------- the player ----------
+// s: { t, skin, clock, track, playing, energy, rows, kbps, khz, stereo, pressed }
+function drawPlayer(x, y, scale, s) {
+  const k = s.skin
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(scale, scale)
+  const w = 900, h = 700
+
+  // Window body and drop shadow.
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,.7)'
+  ctx.shadowBlur = 60
+  ctx.shadowOffsetY = 24
+  ctx.fillStyle = k.body
+  ctx.fillRect(0, 0, w, h)
+  ctx.restore()
+  bevel(0, 0, w, h, k)
+
+  // Title bar.
+  const tg = ctx.createLinearGradient(0, 0, 0, 44)
+  tg.addColorStop(0, k.titleA)
+  tg.addColorStop(1, k.titleB)
+  ctx.fillStyle = tg
+  ctx.fillRect(6, 6, w - 12, 40)
+  ctx.fillStyle = k.titleFg
+  ctx.font = `bold 22px ${MONO}`
+  ctx.textBaseline = 'middle'
+  ctx.fillText('≡  C L A U D E A M P', 22, 27)
+  ctx.textAlign = 'right'
+  ctx.fillText('_  □  ×', w - 22, 27)
+  ctx.textAlign = 'left'
+  // Title stripes, as the classic skin has.
+  ctx.globalAlpha = 0.25
+  ctx.fillStyle = k.titleFg
+  for (let i = 0; i < 4; i++) ctx.fillRect(330, 17 + i * 6, w - 520, 2)
+  ctx.globalAlpha = 1
+
+  // LCD.
+  inset(20, 62, w - 40, 150, k.screen)
+  glowText(s.playing ? '▶' : '■', 52, 112, k.lcd, 40)
+  glowText(s.clock, 92, 112, k.lcd, 62)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(330, 80, w - 370, 60)
+  ctx.clip()
+  glowText(marquee(s.track, 30, s.t * 6), 334, 110, k.lcd, 30, MONO, 12)
+  ctx.restore()
+  ctx.font = `bold 24px ${MONO}`
+  ctx.fillStyle = k.lcdDim
+  ctx.textBaseline = 'middle'
+  ctx.fillText(`${String(s.kbps).padStart(3)} kbps   ${String(s.khz).padStart(2)} kHz`, 52, 178)
+  glowText('mono', 520, 178, s.stereo ? k.lcdDim : k.lcd, 24, MONO, s.stereo ? 0 : 10)
+  glowText('stereo', 610, 178, s.stereo ? k.lcd : k.lcdDim, 24, MONO, s.stereo ? 10 : 0)
+
+  // Visualizer.
+  inset(20, 226, w - 40, 160, k.screen)
+  const bands = 32, bw = 20, gap = 6, vx = 20 + (w - 40 - (bands * (bw + gap) - gap)) / 2, vy = 236, vh = 140
+  for (let b = 0; b < bands; b++) {
+    const lv = level(b, s.t, s.energy)
+    const pk = peak(b, s.t, s.energy)
+    const cells = 14, ch = vh / cells
+    const lit = Math.round(lv * cells)
+    for (let i = 0; i < lit; i++) {
+      const f = (i + 1) / cells
+      ctx.fillStyle = f < 0.45 ? k.low : f < 0.8 ? k.mid : k.high
+      ctx.fillRect(vx + b * (bw + gap), vy + vh - (i + 1) * ch + 1, bw, ch - 3)
+    }
+    if (pk > 0.04) {
+      ctx.fillStyle = k.peak
+      ctx.fillRect(vx + b * (bw + gap), vy + vh - Math.round(pk * cells) * ch - 2, bw, 3)
+    }
+  }
+
+  // Transport.
+  const btns = ['|◀', '▶', '‖', '■', '▶|', '⏏']
+  btns.forEach((g, i) => {
+    const bx = 20 + i * 92
+    bevel(bx, 404, 82, 56, k, s.pressed === i)
+    ctx.fillStyle = '#e8e8f0'
+    ctx.font = `bold 26px ${SANS}`
+    ctx.textAlign = 'center'
+    ctx.fillText(g, bx + 41, 433)
+  })
+  ctx.textAlign = 'left'
+  bevel(586, 404, 294, 56, k, s.pressed === 6)
+  ctx.fillStyle = k.lcd
+  ctx.font = `bold 22px ${MONO}`
+  ctx.fillText(`skin: ${k.name}`, 610, 433)
+
+  // Playlist.
+  inset(20, 476, w - 40, 206, k.screen)
+  ctx.fillStyle = k.lcdDim
+  ctx.font = `bold 18px ${MONO}`
+  ctx.fillText(`── PLAYLIST (${s.rows}) ${'─'.repeat(60)}`.slice(0, 74), 34, 494)
+  const shown = Math.min(s.rows, 6)
+  const first = Math.max(0, s.rows - 6)
+  for (let i = 0; i < shown; i++) {
+    const n = first + i
+    const [tool, title, dur] = TRACKS[n % TRACKS.length]
+    const ry = 520 + i * 26
+    const current = n === s.rows - 1
+    if (current) {
+      ctx.fillStyle = k.lcd
+      ctx.globalAlpha = 0.18
+      ctx.fillRect(28, ry - 12, w - 56, 25)
+      ctx.globalAlpha = 1
+    }
+    ctx.fillStyle = current ? k.lcd : k.lcdDim
+    ctx.font = `bold 20px ${MONO}`
+    const mark = current && s.playing ? '▶' : ' '
+    ctx.fillText(`${mark}${String(n + 1).padStart(3)}. ${tool.padEnd(8)} ${title}`, 34, ry)
+    ctx.textAlign = 'right'
+    ctx.fillText(current && s.playing ? '…' : dur, w - 36, ry)
+    ctx.textAlign = 'left'
+  }
+  ctx.restore()
+}
+
+// ---------- scenes ----------
+function sceneTerminal(t) {
+  ctx.fillStyle = '#07070c'
+  ctx.fillRect(0, 0, W, H)
+  const cmd = '$ claude --plugin-dir ~/claudeamp'
+  const typed = cmd.slice(0, Math.floor(seg(t, 0.4, 2.0) * cmd.length))
+  const cursor = Math.floor(t * 2.5) % 2 === 0 ? '█' : ' '
+  glowText(typed + cursor, 220, H / 2, '#d8d8e0', 54, MONO, 6)
+  if (t > 2.2) {
+    const a = seg(t, 2.2, 2.6)
+    ctx.globalAlpha = a
+    glowText('✓ claudeamp loaded', 220, H / 2 + 80, '#00ff3c', 38, MONO, 14)
+    ctx.globalAlpha = 1
+  }
+}
+
+function sceneQuestion(t) {
+  background(t)
+  const a = seg(t, 3, 3.5) * (1 - seg(t, 5.5, 6))
+  ctx.globalAlpha = a
+  glowText('Remember when your music player', W / 2, H / 2 - 50, '#ffffff', 72, SANS, 20, 'center')
+  glowText('had a visualizer?', W / 2, H / 2 + 50, '#00ff3c', 84, SANS, 30, 'center')
+  ctx.globalAlpha = 1
+}
+
+function playerState(t, skin) {
+  const playT = t - 6
+  const rows = clamp(Math.floor(playT / 1.15) + 1, 1, 8)
+  const [tool, title] = TRACKS[(rows - 1) % TRACKS.length]
+  return {
+    t,
+    skin,
+    clock: `00:${String(Math.floor(playT + 12) % 60).padStart(2, '0')}`,
+    track: `${rows}. ${tool} - ${title}  ***  It really whips the context window`,
+    playing: true,
+    energy: 0.55 + 0.45 * seg(t, 6, 8),
+    rows,
+    kbps: 128,
+    khz: 44,
+    stereo: Math.floor(playT / 1.15) % 3 === 1,
+    pressed: -1,
+  }
+}
+
+function caption(text, sub, t, a, b, color = '#ffffff') {
+  const fade = seg(t, a, a + 0.4) * (1 - seg(t, b - 0.4, b))
+  if (fade <= 0) return
+  ctx.save()
+  ctx.globalAlpha = fade
+  const dy = (1 - easeOut(seg(t, a, a + 0.5))) * 30
+  glowText(text, 1490, 420 + dy, color, 52, SANS, 18, 'center')
+  if (sub) glowText(sub, 1490, 495 + dy, 'rgba(255,255,255,.75)', 32, SANS, 0, 'center', 'normal')
+  ctx.restore()
+}
+
+function scenePlayer(t) {
+  background(t)
+  const enter = easeOut(seg(t, 6, 7.2))
+  const settle = easeInOut(seg(t, 9.5, 10.5))
+  const scale = lerp(0.55, 1.05, backOut(seg(t, 6, 7.4))) * lerp(1, 0.92, settle)
+  const cx = lerp(W / 2, 640, settle)
+  const x = cx - (900 * scale) / 2
+  const y = lerp(H + 100, H / 2 - (700 * scale) / 2, enter)
+  drawPlayer(x, y, scale, playerState(t, SKINS.classic))
+
+  caption('Every turn is a song.', 'The clock runs while Claude works', t, 10.5, 12.5, '#00ff3c')
+  caption('Every tool call is a track.', 'Your whole session, as a playlist', t, 12.5, 14.5, '#e0e000')
+  caption('The visualizer dances', 'to what Claude is streaming', t, 14.5, 16.5, '#ff6a3d')
+}
+
+function sceneSkins(t) {
+  background(t, (t - 16.5) * 20)
+  const local = t - 16.5
+  const idx = Math.min(3, Math.floor(local / 1.0))
+  const skin = SKINS[SKIN_ORDER[idx]]
+  const st = playerState(t, skin)
+  st.pressed = (local % 1) < 0.15 ? 6 : -1
+  const scale = 0.92
+  drawPlayer(640 - (900 * scale) / 2, H / 2 - (700 * scale) / 2, scale, st)
+  // Flash on each skin change.
+  const flash = 1 - seg(local % 1, 0, 0.18)
+  if (flash > 0 && local < 4) {
+    ctx.fillStyle = `rgba(255,255,255,${flash * 0.18})`
+    ctx.fillRect(0, 0, W, H)
+  }
+  const a = seg(t, 16.6, 17)
+  ctx.globalAlpha = a
+  glowText('4 skins', 1500, 400, skin.lcd, 96, SANS, 30, 'center')
+  glowText(SKIN_ORDER.map(n => (n === skin.name ? `[${n}]` : n)).join('  '), 1500, 490, '#ffffff', 30, MONO, 0, 'center', 'normal')
+  ctx.globalAlpha = 1
+}
+
+function sceneControls(t) {
+  background(t)
+  const st = playerState(t, SKINS.classic)
+  const local = t - 20.5
+  const keys = ['z', 'x', 'c', 'v', 'b']
+  const which = Math.floor(local / 0.55)
+  if (which < 5 && (local % 0.55) < 0.25) st.pressed = which === 4 ? 4 : which
+  if (local > 2.9) {
+    st.playing = false
+    st.energy = Math.max(0, 1 - (local - 2.9) * 1.2)
+    st.track = 'Stopped'
+  }
+  const scale = 0.92
+  drawPlayer(640 - (900 * scale) / 2, H / 2 - (700 * scale) / 2, scale, st)
+
+  const a = seg(t, 20.6, 21) * (1 - seg(t, 24.6, 25))
+  ctx.globalAlpha = a
+  glowText('Winamp’s own hotkeys', 1500, 330, '#ffffff', 48, SANS, 14, 'center')
+  keys.forEach((key, i) => {
+    const kx = 1500 - 2 * 110 + i * 110
+    const on = which === i && (local % 0.55) < 0.25
+    ctx.save()
+    ctx.translate(kx, 440 + (on ? 6 : 0))
+    roundRect(-42, -42, 84, 84, 12)
+    ctx.fillStyle = on ? '#00ff3c' : '#26263a'
+    ctx.fill()
+    ctx.restore()
+    glowText(key, kx, 440 + (on ? 6 : 0), on ? '#000' : '#fff', 48, MONO, 0, 'center')
+  })
+  const stopA = seg(t, 23.3, 23.7)
+  ctx.globalAlpha = a * stopA
+  glowText('■ Stop actually stops the turn.', 1500, 570, '#ff6a3d', 40, SANS, 14, 'center')
+  ctx.globalAlpha = 1
+}
+
+function sceneOutro(t) {
+  background(t)
+  const a = seg(t, 25, 25.6)
+  const s = lerp(0.8, 1, easeOut(seg(t, 25, 26)))
+  ctx.save()
+  ctx.globalAlpha = a
+  ctx.translate(W / 2, H / 2 - 150)
+  ctx.scale(s, s)
+  glowText('ClaudeAmp', 0, 0, '#00ff3c', 190, SANS, 40, 'center')
+  ctx.restore()
+  // A mini spectrum under the logo.
+  ctx.globalAlpha = a
+  for (let b = 0; b < 32; b++) {
+    const lv = level(b, t, 0.9 * (1 - seg(t, 29, 30)))
+    const cells = Math.round(lv * 10)
+    for (let i = 0; i < cells; i++) {
+      const f = (i + 1) / 10
+      ctx.fillStyle = f < 0.45 ? '#00d000' : f < 0.8 ? '#e0e000' : '#ff2a00'
+      ctx.fillRect(W / 2 - 32 * 13 + b * 26, H / 2 + 40 - i * 10, 20, 7)
+    }
+  }
+  const b = seg(t, 26, 26.6)
+  ctx.globalAlpha = b
+  glowText('It really whips the context window.', W / 2, H / 2 + 120, '#ffffff', 52, SANS, 12, 'center')
+  const c2 = seg(t, 26.8, 27.4)
+  ctx.globalAlpha = c2
+  glowText('A free, open source mod for Claude Code', W / 2, H / 2 + 210, 'rgba(255,255,255,.8)', 36, SANS, 0, 'center', 'normal')
+  glowText('github.com/katzboaz/ClaudeAmp', W / 2, H / 2 + 290, '#e0e000', 44, MONO, 16, 'center')
+  const d = seg(t, 28, 28.5)
+  ctx.globalAlpha = d * 0.55
+  glowText('A fan tribute. Not affiliated with Winamp or Anthropic.', W / 2, H - 70, '#ffffff', 22, SANS, 0, 'center', 'normal')
+  ctx.globalAlpha = 1
+}
+
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = 1
+  if (t < 3) sceneTerminal(t)
+  else if (t < 6) sceneQuestion(t)
+  else if (t < 16.5) scenePlayer(t)
+  else if (t < 20.5) sceneSkins(t)
+  else if (t < 25) sceneControls(t)
+  else sceneOutro(t)
+  scanlines()
+  // Fade from and to black.
+  const fade = Math.max(1 - seg(t, 0, 0.4), seg(t, 29.3, 30))
+  if (fade > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${fade})`
+    ctx.fillRect(0, 0, W, H)
+  }
+}
+window.render = render
+window.DURATION = DURATION
+
+if (!navigator.webdriver) {
+  const start = performance.now()
+  const loop = () => {
+    render(((performance.now() - start) / 1000) % DURATION)
+    requestAnimationFrame(loop)
+  }
+  loop()
+} else {
+  render(0)
+}
+</script>
+</body>
+</html>
