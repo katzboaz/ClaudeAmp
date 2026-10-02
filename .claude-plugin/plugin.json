@@ -1,0 +1,32 @@
+{
+  "name": "claudeamp",
+  "version": "0.1.0",
+  "description": "A Winamp-style player for Claude Code: live spectrum visualizer, scrolling marquee, playlist of tool calls and transport controls.",
+  "author": { "name": "Boaz Katz" },
+  "homepage": "https://github.com/katzboaz/ClaudeAmp",
+  "repository": "https://github.com/katzboaz/ClaudeAmp",
+  "license": "MIT",
+  "keywords": ["winamp", "visualizer", "pane", "mod", "fun"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "skin": {
+      "type": "string",
+      "title": "Skin",
+      "description": "Color skin for the ClaudeAmp window",
+      "default": "classic",
+      "options": ["classic", "claude", "llama", "vapor"]
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open on start",
+      "description": "Open the ClaudeAmp pane when the session starts (seats once the terminal is wide enough)",
+      "default": true
+    },
+    "sounds": {
+      "type": "boolean",
+      "title": "Sounds",
+      "description": "Play a chime when a turn finishes (macOS only)",
+      "default": false
+    }
+  }
+}
