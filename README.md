@@ -2,6 +2,12 @@
 
 A Winamp-style player for Claude Code. It really whips the context window.
 
+<p align="center">
+  <a href="media/promo/claudeamp-promo.mp4"><img src="media/promo/preview.gif" alt="ClaudeAmp: the player docked in Claude Code, its visualizer dancing as tool calls fill the playlist" width="800"></a>
+  <br>
+  <a href="media/promo/claudeamp-promo.mp4"><b>▶ Watch the 30s promo (with sound)</b></a>
+</p>
+
 ClaudeAmp is an open source [Claude Code mod](https://code.claude.com/docs) (a plugin of function hooks) that docks a retro media player next to your session. Every turn is a song, every tool call is a track, and the spectrum analyzer dances to whatever Claude is streaming.
 
 ```
@@ -98,6 +104,8 @@ tsc -p .            # after the first load, which lays .claude-plugin/types/
 ```
 
 Run `claude --plugin-dir . --debug` and saves hot reload the mod.
+
+The promo video is generated too: `media/promo/promo.html` is the animation (open it in a browser to watch it live), `soundtrack.py` synthesizes the music and `render.mjs` renders both to MP4 with headless Chromium and ffmpeg (`npm i playwright`, then `python3 soundtrack.py && node render.mjs`, needs numpy and ffmpeg).
 
 PRs welcome, especially new skins. A skin is one entry in `SKINS` in `hooks/lib.ts`.
 
